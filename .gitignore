@@ -14,6 +14,7 @@ Cargo.lock
 *.pdb
 
 # Can't send req file
+request_file/*
 *.json
 
 # RustRover
