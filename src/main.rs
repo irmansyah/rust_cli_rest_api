@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File},
-    io::{self, BufReader, Read, Write},
+    io::{self, BufReader, Write},
 };
 
 use clap::{Arg, Command};
@@ -18,10 +18,14 @@ struct AppMainRequest {
 
 #[derive(Clone, Debug, Deserialize)]
 struct RequestData {
+    req_tag: String,
     req_title: String,
     req_type: String,
     req_end_point: String,
+    req_params: Option<String>,
     req_token_path: Option<String>,
+    req_token_type: Option<String>,
+    req_token_save: Option<bool>,
     req_body: Option<RequestDataBody>,
 }
 
@@ -33,21 +37,13 @@ struct RequestDataBody {
 
 fn read_from_file(file_path: &str) -> io::Result<String> {
     let contents = fs::read_to_string(file_path).unwrap();
-    println!("file_path     : {}", file_path);
-    println!("contents      : {}", contents);
     Ok(contents)
 }
 
 fn write_to_file(body_data: &Value, token_path: &str, token_structure: &str) -> io::Result<()> {
     let token = get_nested_value(&body_data, token_structure);
     let mut file = File::create(token_path)?; // Open the file in write mode (it will overwrite the file)
-    file.write_all(
-        token
-            .unwrap_or_default()
-            .as_str()
-            .unwrap_or_default()
-            .as_bytes(),
-    )?;
+    file.write_all(token.unwrap().as_str().unwrap_or_default().as_bytes())?;
     Ok(())
 }
 
@@ -136,137 +132,156 @@ fn main() {
                 .required(true),
         )
         .arg(
-            Arg::new("index")
-                .short('i')
-                .long("index")
-                .value_name("INDEX")
-                .help("The API FILE INDEX")
+            Arg::new("tag")
+                .short('t')
+                .long("tag")
+                .value_name("TAG")
+                .help("The API FILE TAG")
                 .required(true),
         )
         .get_matches();
 
     let file = matches.get_one::<String>("file");
-    let index_str = matches.get_one::<String>("index");
+    let tag = matches.get_one::<String>("tag");
 
-    if let Some(index_str) = index_str {
-        match index_str.parse::<i8>() {
-            Ok(number) => {
-                let client = Client::new();
+    let client = Client::new();
 
-                if let Some(file_data) = file {
-                    let file = File::open(file_data).expect("File should open read only");
-                    let reader = BufReader::new(file);
-                    let app_main_request: AppMainRequest =
-                        serde_json::from_reader(reader).expect("File should be proper JSON");
+    if let Some(file_data) = file {
+        let file = File::open(file_data).expect("File should open read only");
+        let reader = BufReader::new(file);
+        let app_main_request: AppMainRequest =
+            serde_json::from_reader(reader).expect("File should be proper JSON");
 
-                    let request = app_main_request.requests.get(number as usize).unwrap();
-                    let url = app_main_request.base_url + &request.req_end_point;
-                    let access_token_file = &app_main_request.access_token_file.unwrap_or_default();
+        let tag_value: Option<&RequestData> = app_main_request
+            .requests
+            .iter()
+            .find(|&item| item.req_tag == *tag.unwrap());
 
-                    let method = &request.req_type;
-                    let title = &request.req_title;
-                    let token_path = &request.req_token_path;
-                    let access_token = read_from_file(&access_token_file).unwrap_or_default();
+        if let Some(request) = tag_value {
+            // let request = app_main_request.requests.get(number as usize).unwrap();
 
-                    println!("");
-                    println!("{} {}", "TITLE    :".blue().bold(), title.green());
-                    println!("{} {}", "URL      :".blue().bold(), url.yellow());
+            let url = app_main_request.base_url + &request.req_end_point;
+            let access_token_file = &app_main_request.access_token_file.unwrap_or_default();
 
-                    // Make the request
-                    let response = match method.as_str() {
-                        "GET" => client.get(url).header("Authorization", access_token).send(),
-                        "POST" => match &request.req_body {
-                            Some(req_body) => {
-                                let body_data = request_body_data(req_body.clone());
-                                if req_body.body_type == "FORM_DATA" {
-                                    client
-                                        .post(url)
-                                        .form(&body_data)
-                                        .header("Authorization", access_token)
-                                        .send()
-                                } else {
-                                    let pretty_json_string =
-                                        serde_json::to_string_pretty(&body_data)
-                                            .expect("Failed to convert to pretty JSON string");
-                                    client
-                                        .post(url)
-                                        .body(pretty_json_string)
-                                        .header("Authorization", access_token)
-                                        .send()
-                                }
-                            }
-                            None => client.post(url).send(),
-                        },
-                        "PUT" => match &request.req_body {
-                            Some(req_body) => {
-                                let body_data = request_body_data(req_body.clone());
-                                if req_body.body_type == "FORM_DATA" {
-                                    client
-                                        .put(url)
-                                        .form(&body_data)
-                                        .header("Authorization", access_token)
-                                        .send()
-                                } else {
-                                    let pretty_json_string =
-                                        serde_json::to_string_pretty(&body_data)
-                                            .expect("Failed to convert to pretty JSON string");
-                                    client
-                                        .put(url)
-                                        .body(pretty_json_string)
-                                        .header("Authorization", access_token)
-                                        .send()
-                                }
-                            }
-                            None => client
-                                .post(url)
-                                .header("Authorization", access_token)
-                                .send(),
-                        },
-                        "DELETE" => client
-                            .delete(url)
-                            .header("Authorization", access_token)
-                            .send(),
-                        _ => {
-                            eprintln!("{}", "Unsupported HTTP method".red());
-                            return;
-                        }
-                    };
+            let method = &request.req_type;
+            let title = &request.req_title;
+            let params = request.req_params.clone().unwrap_or_default();
+            let token_path = &request.req_token_path;
+            let token_type = &request.req_token_type;
+            let token_save = &request.req_token_save;
+            let access_token = read_from_file(&access_token_file).unwrap();
 
-                    // Handle response
-                    match response {
-                        Ok(resp) => {
-                            let status = resp.status();
-                            let body: Value = resp.json().unwrap_or_else(
-                                |_| serde_json::json!({"error": "Failed to parse response as JSON"}),
-                            );
-                            println!("");
-                            println!(
-                                "{} {}",
-                                "Status   :".blue().bold(),
-                                status.to_string().green()
-                            );
-                            println!("{}", "Response :".blue().bold());
-                            println!("");
+            println!("");
+            println!("{} {}", "TITLE    :".blue().bold(), title.green());
+            println!("{} {}", "URL      :".blue().bold(), url.yellow());
 
-                            let _ = write_to_file(
-                                &body,
-                                &access_token_file,
-                                &token_path.as_deref().unwrap_or_default(),
-                            );
-                            display_colored_json(&body, 0); // Display formatted and colored JSON
-                            println!("");
-                            println!("");
-                        }
-                        Err(err) => {
-                            eprintln!("{}", "Error:".red().bold());
-                            eprintln!("{}", err.to_string().red());
+            let token_data = format!(
+                "{} {}",
+                token_type.clone().unwrap_or_default(),
+                access_token
+            );
+
+            // println!("{} {}", "TOKEN    :".blue().bold(), token_data.yellow());
+
+            // Make the request
+            let response = match method.as_str() {
+                "GET" => client
+                    .get(format!("{}{}", url, params))
+                    .header("Authorization", token_data)
+                    .header("Content-Type", "application/json")
+                    .send(),
+                "POST" => match &request.req_body {
+                    Some(req_body) => {
+                        let body_data = request_body_data(req_body.clone());
+
+                        if req_body.body_type == "FORM_DATA" {
+                            client
+                                .post(format!("{}{}", url, params))
+                                .form(&body_data)
+                                .header("Authorization", token_data)
+                                .header("Content-Type", "application/json")
+                                .send()
+                        } else {
+                            let pretty_json_string = serde_json::to_string_pretty(&body_data)
+                                .expect("Failed to convert to pretty JSON string");
+                            client
+                                .post(format!("{}{}", url, params))
+                                .header("Authorization", token_data)
+                                .header("Content-Type", "application/json")
+                                .body(pretty_json_string)
+                                .send()
                         }
                     }
+                    None => client.post(url).send(),
+                },
+                "PUT" => match &request.req_body {
+                    Some(req_body) => {
+                        let body_data = request_body_data(req_body.clone());
+                        if req_body.body_type == "FORM_DATA" {
+                            client
+                                .put(format!("{}{}", url, params))
+                                .form(&body_data)
+                                .header("Authorization", token_data)
+                                .send()
+                        } else {
+                            let pretty_json_string = serde_json::to_string_pretty(&body_data)
+                                .expect("Failed to convert to pretty JSON string");
+                            client
+                                .put(format!("{}{}", url, params))
+                                .header("Authorization", token_data)
+                                .header("Content-Type", "application/json")
+                                .body(pretty_json_string)
+                                .send()
+                        }
+                    }
+                    None => client.post(url).header("Authorization", token_data).send(),
+                },
+                "DELETE" => client
+                    .delete(format!("{}{}", url, params))
+                    .header("Authorization", token_data)
+                    .send(),
+                _ => {
+                    eprintln!("{}", "Unsupported HTTP method".red());
+                    return;
+                }
+            };
+
+            // Handle response
+            match response {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let body: Value = resp.json().unwrap_or_else(
+                        |_| serde_json::json!({"error": "Failed to parse response as JSON"}),
+                    );
+                    println!("");
+                    println!(
+                        "{} {}",
+                        "Status   :".blue().bold(),
+                        status.to_string().green()
+                    );
+                    println!("{}", "Response :".blue().bold());
+                    println!("");
+
+                    if token_save.unwrap_or_default() {
+                        let info = write_to_file(
+                            &body,
+                            &access_token_file,
+                            &token_path.as_deref().unwrap_or_default(),
+                        );
+
+                        println!("Info : {:?}", info);
+                    }
+                    display_colored_json(&body, 0); // Display formatted and colored JSON
+                    println!("");
+                    println!("");
+                }
+                Err(err) => {
+                    eprintln!("{}", "Error : ".red().bold());
+                    eprintln!("{}", err.to_string().red());
                 }
             }
-            Err(e) => println!("Failed to parse the string: {}", e),
+        } else {
+            println!("Item not found");
         }
-    } else {
-        eprintln!("No 'index' provided.");
     }
 }
