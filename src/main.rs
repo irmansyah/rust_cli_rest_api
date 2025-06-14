@@ -1,6 +1,5 @@
 use std::{
-    fs::{self, File},
-    io::{self, BufReader, Write},
+    env, fs::{self, File}, io::{self, BufReader, Write}
 };
 
 use clap::{Arg, Command};
@@ -8,6 +7,7 @@ use colored::*;
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use serde_json::Value;
+use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 struct AppMainRequest {
@@ -35,15 +35,33 @@ struct RequestDataBody {
     body_file: String,
 }
 
+fn expand_tilde(path: &str) -> String {
+    if let Ok(home) = env::var("HOME") {
+        if path == "~" {
+            home
+        } else if let Some(rest) = path.strip_prefix("~/") {
+            let mut home_path = PathBuf::from(home);
+            home_path.push(rest);
+            home_path.to_string_lossy().into_owned()
+        } else {
+            path.to_string()
+        }
+    } else {
+        path.to_string()
+    }
+}
+
 fn read_from_file(file_path: &str) -> io::Result<String> {
-    let contents = fs::read_to_string(file_path).unwrap();
+    let contents_path_buf = expand_tilde(&file_path);
+    let contents = fs::read_to_string(contents_path_buf).unwrap();
     Ok(contents)
 }
 
 fn write_to_file(body_data: &Value, token_path: &str, token_structure: &str) -> io::Result<()> {
+    let contents_path_buf = expand_tilde(&token_path);
     let token = get_nested_value(&body_data, token_structure);
-    let mut file = File::create(token_path)?; // Open the file in write mode (it will overwrite the file)
-    file.write_all(token.unwrap().as_str().unwrap_or_default().as_bytes())?;
+    let mut file = File::create(contents_path_buf)?;
+    file.write_all(token.unwrap_or_default().as_str().unwrap_or_default().as_bytes())?;
     Ok(())
 }
 
@@ -55,7 +73,8 @@ fn get_nested_value(json: &Value, path: &str) -> Option<Value> {
 }
 
 fn request_body_data(req_body: RequestDataBody) -> Value {
-    let body_file_path = req_body.body_file.clone();
+    let contents_path = expand_tilde(&req_body.body_file.clone());
+    let body_file_path = contents_path;
     let body_file = File::open(body_file_path).expect("Failed to read file");
     let body_reader = BufReader::new(body_file);
     let body_data: Value =
@@ -147,7 +166,9 @@ fn main() {
     let client = Client::new();
 
     if let Some(file_data) = file {
-        let file = File::open(file_data).expect("File should open read only");
+
+        let file_path_buf = expand_tilde(&file_data);
+        let file = File::open(file_path_buf).expect("File should open read only");
         let reader = BufReader::new(file);
         let app_main_request: AppMainRequest =
             serde_json::from_reader(reader).expect("File should be proper JSON");
@@ -158,8 +179,6 @@ fn main() {
             .find(|&item| item.req_tag == *tag.unwrap());
 
         if let Some(request) = tag_value {
-            // let request = app_main_request.requests.get(number as usize).unwrap();
-
             let url = app_main_request.base_url + &request.req_end_point;
             let access_token_file = &app_main_request.access_token_file.unwrap_or_default();
 
