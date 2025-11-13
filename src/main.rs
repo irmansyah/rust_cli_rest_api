@@ -1,5 +1,7 @@
 use std::{
-    env, fs::{self, File}, io::{self, BufReader, Write}
+    env,
+    fs::{self, File},
+    io::{self, BufReader, Write},
 };
 
 use clap::{Arg, Command};
@@ -61,7 +63,13 @@ fn write_to_file(body_data: &Value, token_path: &str, token_structure: &str) -> 
     let contents_path_buf = expand_tilde(&token_path);
     let token = get_nested_value(&body_data, token_structure);
     let mut file = File::create(contents_path_buf)?;
-    file.write_all(token.unwrap_or_default().as_str().unwrap_or_default().as_bytes())?;
+    file.write_all(
+        token
+            .unwrap_or_default()
+            .as_str()
+            .unwrap_or_default()
+            .as_bytes(),
+    )?;
     Ok(())
 }
 
@@ -166,7 +174,6 @@ fn main() {
     let client = Client::new();
 
     if let Some(file_data) = file {
-
         let file_path_buf = expand_tilde(&file_data);
         let file = File::open(file_path_buf).expect("File should open read only");
         let reader = BufReader::new(file);
@@ -255,10 +262,50 @@ fn main() {
                     }
                     None => client.post(url).header("Authorization", token_data).send(),
                 },
-                "DELETE" => client
-                    .delete(format!("{}{}", url, params))
-                    .header("Authorization", token_data)
-                    .send(),
+                "PATCH" => match &request.req_body {
+                    Some(req_body) => {
+                        let body_data = request_body_data(req_body.clone());
+                        if req_body.body_type == "FORM_DATA" {
+                            client
+                                .patch(format!("{}{}", url, params))
+                                .form(&body_data)
+                                .header("Authorization", token_data)
+                                .send()
+                        } else {
+                            let pretty_json_string = serde_json::to_string_pretty(&body_data)
+                                .expect("Failed to convert to pretty JSON string");
+                            client
+                                .patch(format!("{}{}", url, params))
+                                .header("Authorization", token_data)
+                                .header("Content-Type", "application/json")
+                                .body(pretty_json_string)
+                                .send()
+                        }
+                    }
+                    None => client.post(url).header("Authorization", token_data).send(),
+                },
+                "DELETE" => match &request.req_body {
+                    Some(req_body) => {
+                        let body_data = request_body_data(req_body.clone());
+                        if req_body.body_type == "FORM_DATA" {
+                            client
+                                .delete(format!("{}{}", url, params))
+                                .form(&body_data)
+                                .header("Authorization", token_data)
+                                .send()
+                        } else {
+                            let pretty_json_string = serde_json::to_string_pretty(&body_data)
+                                .expect("Failed to convert to pretty JSON string");
+                            client
+                                .delete(format!("{}{}", url, params))
+                                .header("Authorization", token_data)
+                                .header("Content-Type", "application/json")
+                                .body(pretty_json_string)
+                                .send()
+                        }
+                    }
+                    None => client.post(url).header("Authorization", token_data).send(),
+                },
                 _ => {
                     eprintln!("{}", "Unsupported HTTP method".red());
                     return;
@@ -282,13 +329,11 @@ fn main() {
                     println!("");
 
                     if token_save.unwrap_or_default() {
-                        let info = write_to_file(
+                        let _ = write_to_file(
                             &body,
                             &access_token_file,
                             &token_path.as_deref().unwrap_or_default(),
                         );
-
-                        println!("Info : {:?}", info);
                     }
                     display_colored_json(&body, 0); // Display formatted and colored JSON
                     println!("");
