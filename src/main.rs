@@ -18,6 +18,7 @@ struct AppMainRequest {
     base_url: String,
     headers: Option<HashMap<String, String>>,
     variable_dir: Option<String>,
+    variable_access_token_file: Option<String>,
     requests: Vec<RequestData>,
 }
 
@@ -134,6 +135,10 @@ fn main() {
             let client = reqwest::blocking::Client::new();
             let main_headers = app_main_request.create_header_map(); // Create HeaderMap from the headers
             let main_variable_dir = app_main_request.variable_dir.clone().unwrap_or_default();
+            let main_variable_access_token_file = app_main_request
+                .variable_access_token_file
+                .clone()
+                .unwrap_or_default();
 
             let method = &request.req_type;
             let title = &request.req_title;
@@ -154,8 +159,6 @@ fn main() {
                 .clone()
                 .unwrap_or_default();
 
-            // let access_token = read_from_file(&main_variable_dir).unwrap_or_default();
-
             println!("");
             println!("{} {}", "TITLE    :".blue().bold(), title.green());
             println!("{} {}", "URL      :".blue().bold(), main_url.yellow());
@@ -163,17 +166,19 @@ fn main() {
             let access_token = format!(
                 "{} {}",
                 variable_type.clone().unwrap_or_default(),
-                read_from_file(format!("{}/{}", &main_variable_dir, "access_token.txt").as_str())
-                    .unwrap_or_default()
+                read_from_file(
+                    format!("{}/{}", &main_variable_dir, main_variable_access_token_file).as_str()
+                )
+                .unwrap_or_default()
             );
-            println!("access_token : {:?}", access_token);
 
             let response = make_http_request(
                 &client,
                 &method,
                 main_url,
                 main_headers,
-                access_token,
+                access_token.trim().to_string(),
+                main_variable_dir,
                 request.req_body.clone(),
             );
 
@@ -192,7 +197,10 @@ fn main() {
                     println!("{}", "Response :".blue().bold());
                     println!("");
 
-                    if variable_is_save.unwrap_or_default() {
+                    if status.is_success()
+                        && variable_is_save.unwrap_or_default()
+                        && !variable_response_value.is_null()
+                    {
                         let variable_dir = &app_main_request.variable_dir;
                         let response_value = Value::String(variable_response_value.to_string());
                         println!("variable_response_value : {:?}", response_value);
@@ -217,6 +225,7 @@ fn main() {
     fn app_main_request(file_data: &str) -> Result<AppMainRequest, io::Error> {
         let file_path_buf = expand_tilde(&file_data);
         let file = File::open(file_path_buf).expect("File should open read only");
+        // let file = File::open(file_path_buf).unwrap_or(default);
         let reader = BufReader::new(file);
         let app_main_request: AppMainRequest = serde_json::from_reader(reader)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -243,20 +252,80 @@ fn main() {
         access_token: String,
         headers: HeaderMap,
     ) -> Result<reqwest::blocking::Response, Box<dyn std::error::Error>> {
-        Ok(client.get(url).header("Authorization", access_token).headers(headers).send()?)
+        Ok(client
+            .get(url)
+            .header("Authorization", access_token)
+            .headers(headers)
+            .send()?)
     }
 
     fn handle_post_request(
         client: &reqwest::blocking::Client,
         url: String,
         access_token: String,
+        variable_dir: String,
         headers: HeaderMap,
         req_body: Option<RequestDataBody>,
     ) -> Result<reqwest::blocking::Response, Box<dyn std::error::Error>> {
+        // match req_body {
+        //     Some(req_body) => {
+        //         // 1. Make body_data MUTABLE so we can change values inside it
+        //         let mut body_data = request_body_data(req_body.clone());
+
+        //         // 2. Check for variables like {{REFRESH_TOKEN}} and substitute them
+        //         if let Value::Object(ref mut map) = body_data {
+        //             for (_key, value) in map {
+        //                 // We only care if the value is a String
+        //                 if let Value::String(val_str) = value {
+        //                     if val_str.starts_with("{{") && val_str.ends_with("}}") {
+        //                         // Extract the variable name (remove {{ and }})
+        //                         let var_name = &val_str[2..val_str.len() - 2];
+
+        //                         // Construct path: ./variables/NAME.txt
+        //                         // let file_path = format!("./variables/{}.txt", var_name);
+        //                         let file_path = format!("{}/{}.txt", variable_dir, var_name);
+        //                         // let file_path = format!(
+        //                         //     "{}/{}/{}",
+        //                         //     &main_variable_dir, main_variable_access_token_file, var_name
+        //                         // );
+
+        //                         // Read the file
+        //                         let file_content = fs::read_to_string(&file_path).map_err(|e| {
+        //                             format!("Could not read variable file '{}': {}", file_path, e)
+        //                         })?;
+
+        //                         // Update the value in the JSON object
+        //                         // We usage .trim() to remove accidental newlines in the text file
+        //                         *val_str = file_content.trim().to_string();
+        //                     }
+        //                 }
+        //             }
+        //         }
+
+        //         // 3. Proceed with sending the request (Logic unchanged)
+        //         if req_body.body_type == "FORM_DATA" {
+        //             Ok(client.post(url).headers(headers).form(&body_data).send()?)
+        //         } else {
+        //             println!("body_data : {}", body_data);
+        //             let pretty_json_string = serde_json::to_string_pretty(&body_data)?;
+        //             Ok(client
+        //                 .post(url)
+        //                 .headers(headers)
+        //                 .header("Authorization", access_token) // Note: Usually this goes into headers map, but keeping your logic
+        //                 .body(pretty_json_string)
+        //                 .send()?)
+        //         }
+        //     }
+        //     None => Ok(client.post(url).headers(headers).send()?),
+        // }
         match req_body {
             Some(req_body) => {
-                let body_data = request_body_data(req_body.clone());
+                // 1. Create the JSON body
+                let mut body_data = request_body_data(req_body.clone());
 
+                resolve_placeholders(&mut body_data, &variable_dir)?;
+
+                // 3. Send
                 if req_body.body_type == "FORM_DATA" {
                     Ok(client.post(url).headers(headers).form(&body_data).send()?)
                 } else {
@@ -277,12 +346,15 @@ fn main() {
         client: &reqwest::blocking::Client,
         url: String,
         access_token: String,
+        variable_dir: String,
         headers: HeaderMap,
         req_body: Option<RequestDataBody>,
     ) -> Result<reqwest::blocking::Response, Box<dyn std::error::Error>> {
         match req_body {
             Some(req_body) => {
-                let body_data = request_body_data(req_body.clone());
+                let mut body_data = request_body_data(req_body.clone());
+
+                resolve_placeholders(&mut body_data, &variable_dir)?;
 
                 if req_body.body_type == "FORM_DATA" {
                     Ok(client.put(url).headers(headers).form(&body_data).send()?)
@@ -306,13 +378,50 @@ fn main() {
         url: String,
         headers: HeaderMap,
         access_token: String,
+        variable_dir: String,
         req_body: Option<RequestDataBody>,
     ) -> Result<reqwest::blocking::Response, Box<dyn std::error::Error>> {
         match method {
             "GET" => handle_get_request(client, url, access_token, headers),
-            "POST" => handle_post_request(client, url, access_token, headers, req_body),
-            "PUT" => handle_put_request(client, url, access_token, headers, req_body),
+            "POST" => {
+                handle_post_request(client, url, access_token, variable_dir, headers, req_body)
+            }
+            "PUT" => handle_put_request(client, url, access_token, variable_dir, headers, req_body),
             _ => Err(format!("Unsupported HTTP method: {}", method).into()),
         }
+    }
+
+    /// Scans a JSON object for strings like "{{VAR_NAME}}" and replaces them
+    /// with the content of ./variables/VAR_NAME.txt
+    fn resolve_placeholders(
+        json_body: &mut Value,
+        variable_dir: &String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // We only look inside JSON Objects (Key-Value pairs)
+        if let Value::Object(ref mut map) = json_body {
+            for (_key, value) in map {
+                // We only care if the value is a String
+                if let Value::String(val_str) = value {
+                    if val_str.starts_with("{{") && val_str.ends_with("}}") {
+                        // 1. Extract variable name (e.g., "REFRESH_TOKEN")
+                        let var_name = &val_str[2..val_str.len() - 2];
+
+                        // 2. Build path
+                        // let file_path = format!("./variables/{}.txt", var_name);
+                        let file_path = format!("{}/{}.txt", variable_dir, var_name);
+
+                        // 3. Read file
+                        let content = read_from_file(&file_path.as_str()).map_err(|e| {
+                            format!("Error reading variable '{}': {}", file_path, e)
+                        })?;
+
+                        // 4. Update the JSON value directly
+                        // .trim() is important to remove newline characters from the file
+                        *val_str = content.trim().to_string();
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }

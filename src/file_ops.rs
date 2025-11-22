@@ -1,5 +1,4 @@
 use serde_json::Value;
-use std::collections::HashMap;
 use std::env;
 use std::fs::{create_dir_all, File};
 use std::io::{self, Read, Write};
@@ -88,7 +87,8 @@ fn write_multiple_files(body_data: &Value, dir_path: &Path, structure_str: &str)
     for mapping in mappings {
         let file_path = dir_path.join(&mapping.filename);
 
-        let nested_value = get_nested_value(body_data, &mapping.json_path).unwrap();
+        let nested_value =
+            get_nested_value(body_data, &mapping.json_path).expect("Cannot get nested value...");
         let variable_value = nested_value.as_str().unwrap_or_default();
 
         let mut file = File::create(&file_path)?;
@@ -145,56 +145,6 @@ pub fn read_from_file(file_path: &str) -> io::Result<String> {
     Ok(contents)
 }
 
-/// Read multiple files from a directory and return as HashMap
-pub fn read_files_from_dir(dir_path: &str) -> io::Result<HashMap<String, String>> {
-    let full_path = expand_tilde(dir_path);
-    let path = Path::new(&full_path);
-
-    if !path.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Path is not a directory",
-        ));
-    }
-
-    let mut files_content = HashMap::new();
-
-    for entry in std::fs::read_dir(path)? {
-        let entry = entry?;
-        let file_path = entry.path();
-
-        if file_path.is_file() {
-            if let Some(filename) = file_path.file_name().and_then(|s| s.to_str()) {
-                let content = read_from_file(file_path.to_str().unwrap())?;
-                files_content.insert(filename.to_string(), content);
-            }
-        }
-    }
-
-    Ok(files_content)
-}
-
-/// Write login variables to multiple files (convenience function)
-pub fn write_login_variables(body_data: &Value, base_dir: &str) -> io::Result<()> {
-    let variables = vec![
-        ("access_token.txt", "token.access_token"),
-        ("refresh_token.txt", "token.refresh_token"),
-        ("email.txt", "user.email"),
-        ("user_id.txt", "user.id"),
-    ];
-
-    for (filename, json_path) in variables {
-        write_to_file(
-            body_data,
-            &Some(format!("{}/{}", base_dir, filename)),
-            &Value::String(json_path.to_string()),
-        )?;
-    }
-
-    Ok(())
-}
-
-/// Helper function to extract nested value from JSON (assuming this exists elsewhere)
 /// This would typically be imported from another module
 fn get_nested_value<'a>(data: &'a Value, path: &'a str) -> Option<&'a Value> {
     let mut current = data;
