@@ -1,3 +1,4 @@
+use colored::Colorize;
 use serde_json::Value;
 use std::env;
 use std::fs::{create_dir_all, File};
@@ -96,7 +97,8 @@ fn write_multiple_files(body_data: &Value, dir_path: &Path, structure_str: &str)
 
         println!(
             "Written to: {} (from path: {})",
-            mapping.filename, mapping.json_path
+            mapping.filename.to_string().yellow().bold(),
+            mapping.json_path.to_string().yellow()
         );
     }
 

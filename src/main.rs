@@ -203,7 +203,6 @@ fn main() {
                     {
                         let variable_dir = &app_main_request.variable_dir;
                         let response_value = Value::String(variable_response_value.to_string());
-                        println!("variable_response_value : {:?}", response_value);
 
                         let _ = write_to_file(&body, &variable_dir, &response_value);
                     }
@@ -267,57 +266,6 @@ fn main() {
         headers: HeaderMap,
         req_body: Option<RequestDataBody>,
     ) -> Result<reqwest::blocking::Response, Box<dyn std::error::Error>> {
-        // match req_body {
-        //     Some(req_body) => {
-        //         // 1. Make body_data MUTABLE so we can change values inside it
-        //         let mut body_data = request_body_data(req_body.clone());
-
-        //         // 2. Check for variables like {{REFRESH_TOKEN}} and substitute them
-        //         if let Value::Object(ref mut map) = body_data {
-        //             for (_key, value) in map {
-        //                 // We only care if the value is a String
-        //                 if let Value::String(val_str) = value {
-        //                     if val_str.starts_with("{{") && val_str.ends_with("}}") {
-        //                         // Extract the variable name (remove {{ and }})
-        //                         let var_name = &val_str[2..val_str.len() - 2];
-
-        //                         // Construct path: ./variables/NAME.txt
-        //                         // let file_path = format!("./variables/{}.txt", var_name);
-        //                         let file_path = format!("{}/{}.txt", variable_dir, var_name);
-        //                         // let file_path = format!(
-        //                         //     "{}/{}/{}",
-        //                         //     &main_variable_dir, main_variable_access_token_file, var_name
-        //                         // );
-
-        //                         // Read the file
-        //                         let file_content = fs::read_to_string(&file_path).map_err(|e| {
-        //                             format!("Could not read variable file '{}': {}", file_path, e)
-        //                         })?;
-
-        //                         // Update the value in the JSON object
-        //                         // We usage .trim() to remove accidental newlines in the text file
-        //                         *val_str = file_content.trim().to_string();
-        //                     }
-        //                 }
-        //             }
-        //         }
-
-        //         // 3. Proceed with sending the request (Logic unchanged)
-        //         if req_body.body_type == "FORM_DATA" {
-        //             Ok(client.post(url).headers(headers).form(&body_data).send()?)
-        //         } else {
-        //             println!("body_data : {}", body_data);
-        //             let pretty_json_string = serde_json::to_string_pretty(&body_data)?;
-        //             Ok(client
-        //                 .post(url)
-        //                 .headers(headers)
-        //                 .header("Authorization", access_token) // Note: Usually this goes into headers map, but keeping your logic
-        //                 .body(pretty_json_string)
-        //                 .send()?)
-        //         }
-        //     }
-        //     None => Ok(client.post(url).headers(headers).send()?),
-        // }
         match req_body {
             Some(req_body) => {
                 // 1. Create the JSON body
@@ -327,7 +275,9 @@ fn main() {
 
                 // 3. Send
                 if req_body.body_type == "FORM_DATA" {
-                    Ok(client.post(url).headers(headers).form(&body_data).send()?)
+                    Ok(client.post(url).headers(headers)
+                        .header("Authorization", access_token)
+                        .form(&body_data).send()?)
                 } else {
                     let pretty_json_string = serde_json::to_string_pretty(&body_data)?;
                     Ok(client
@@ -335,6 +285,7 @@ fn main() {
                         .headers(headers)
                         .header("Authorization", access_token)
                         .body(pretty_json_string)
+                        // .form(&body_data)
                         .send()?)
                 }
             }
@@ -357,7 +308,9 @@ fn main() {
                 resolve_placeholders(&mut body_data, &variable_dir)?;
 
                 if req_body.body_type == "FORM_DATA" {
-                    Ok(client.put(url).headers(headers).form(&body_data).send()?)
+                    Ok(client.put(url).headers(headers)
+                        .header("Authorization", access_token)
+                        .form(&body_data).send()?)
                 } else {
                     let pretty_json_string = serde_json::to_string_pretty(&body_data)?;
                     Ok(client
@@ -365,6 +318,7 @@ fn main() {
                         .headers(headers)
                         .header("Authorization", access_token)
                         .body(pretty_json_string)
+                        // .form(&body_data)
                         .send()?)
                 }
             }
@@ -416,7 +370,6 @@ fn main() {
                         })?;
 
                         // 4. Update the JSON value directly
-                        // .trim() is important to remove newline characters from the file
                         *val_str = content.trim().to_string();
                     }
                 }
