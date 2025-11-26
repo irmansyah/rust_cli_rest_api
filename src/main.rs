@@ -1,12 +1,12 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{self, BufReader},
+    io::{self, BufReader}, path::Path,
 };
 
 use clap::{Arg, Command};
 use colored::*;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::{blocking::multipart, header::{HeaderMap, HeaderName, HeaderValue}};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -57,6 +57,7 @@ struct RequestData {
 struct RequestDataBody {
     body_type: String,
     body_file: String,
+    file_paths: Option<Vec<String>>,
 }
 
 fn display_colored_json(value: &Value, indent_level: usize) {
@@ -258,6 +259,41 @@ fn main() {
             .send()?)
     }
 
+    // fn handle_post_request(
+    //     client: &reqwest::blocking::Client,
+    //     url: String,
+    //     access_token: String,
+    //     variable_dir: String,
+    //     headers: HeaderMap,
+    //     req_body: Option<RequestDataBody>,
+    // ) -> Result<reqwest::blocking::Response, Box<dyn std::error::Error>> {
+    //     match req_body {
+    //         Some(req_body) => {
+    //             // 1. Create the JSON body
+    //             let mut body_data = request_body_data(req_body.clone());
+
+    //             resolve_placeholders(&mut body_data, &variable_dir)?;
+
+    //             // 3. Send
+    //             if req_body.body_type == "FORM_DATA" {
+    //                 Ok(client.post(url).headers(headers)
+    //                     .header("Authorization", access_token)
+    //                     .form(&body_data).send()?)
+    //             } else {
+    //                 let pretty_json_string = serde_json::to_string_pretty(&body_data)?;
+    //                 Ok(client
+    //                     .post(url)
+    //                     .headers(headers)
+    //                     .header("Authorization", access_token)
+    //                     .body(pretty_json_string)
+    //                     // .form(&body_data)
+    //                     .send()?)
+    //             }
+    //         }
+    //         None => Ok(client.post(url).headers(headers).send()?),
+    //     }
+    // }
+
     fn handle_post_request(
         client: &reqwest::blocking::Client,
         url: String,
@@ -268,25 +304,74 @@ fn main() {
     ) -> Result<reqwest::blocking::Response, Box<dyn std::error::Error>> {
         match req_body {
             Some(req_body) => {
-                // 1. Create the JSON body
+                // 1. Create the base JSON data
                 let mut body_data = request_body_data(req_body.clone());
-
                 resolve_placeholders(&mut body_data, &variable_dir)?;
 
-                // 3. Send
-                if req_body.body_type == "FORM_DATA" {
-                    Ok(client.post(url).headers(headers)
-                        .header("Authorization", access_token)
-                        .form(&body_data).send()?)
-                } else {
-                    let pretty_json_string = serde_json::to_string_pretty(&body_data)?;
-                    Ok(client
+                // 2. Check body type and build request
+                match req_body.body_type.as_str() {
+                    "MULTIPART" => {
+                        // Convert JSON payload to a string (this will be one part of the form)
+                        let json_string = serde_json::to_string(&body_data)?;
+
+                        // Start building the multipart form
+                        let mut form = multipart::Form::new();
+
+                        // Add the JSON payload as a text field named 'payload'
+                        form = form.text("payload", json_string);
+
+                        // Add files (if any)
+                        if let Some(file_paths) = req_body.file_paths {
+                            for path_str in file_paths {
+                                let path = Path::new(&path_str);
+                                let filename = path
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .into_owned();
+
+                                // Create a file part from the file bytes
+                                let file = File::open(path)?;
+                                let file_part = multipart::Part::reader(file).file_name(filename);
+
+                                // Add the file part under the field name 'images'
+                                // This corresponds to the 'images' field in your API controller.
+                                form = form.part("images", file_part);
+                            }
+                        }
+
+                        // Send the request with the multipart form
+                        Ok(client
+                            .post(url)
+                            .headers(headers)
+                            .header("Authorization", access_token)
+                            .multipart(form) // Use .multipart() instead of .form()
+                            .send()?)
+                    }
+
+                    // ----------------------------------------------------
+                    // Existing: Standard form-urlencoded (simple key=value)
+                    // ----------------------------------------------------
+                    "FORM_DATA" => Ok(client
                         .post(url)
                         .headers(headers)
                         .header("Authorization", access_token)
-                        .body(pretty_json_string)
-                        // .form(&body_data)
-                        .send()?)
+                        .form(&body_data)
+                        .send()?),
+
+                    // ----------------------------------------------------
+                    // Existing: Standard JSON body
+                    // ----------------------------------------------------
+                    _ => {
+                        // Assume standard JSON body if not specified
+                        let pretty_json_string = serde_json::to_string_pretty(&body_data)?;
+                        Ok(client
+                            .post(url)
+                            .headers(headers)
+                            .header("Authorization", access_token)
+                            .body(pretty_json_string)
+                            .send()?)
+                    }
                 }
             }
             None => Ok(client.post(url).headers(headers).send()?),
@@ -308,9 +393,12 @@ fn main() {
                 resolve_placeholders(&mut body_data, &variable_dir)?;
 
                 if req_body.body_type == "FORM_DATA" {
-                    Ok(client.put(url).headers(headers)
+                    Ok(client
+                        .put(url)
+                        .headers(headers)
                         .header("Authorization", access_token)
-                        .form(&body_data).send()?)
+                        .form(&body_data)
+                        .send()?)
                 } else {
                     let pretty_json_string = serde_json::to_string_pretty(&body_data)?;
                     Ok(client
