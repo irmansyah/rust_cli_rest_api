@@ -1,12 +1,16 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{self, BufReader}, path::Path,
+    io::{self, BufReader},
+    path::Path,
 };
 
 use clap::{Arg, Command};
 use colored::*;
-use reqwest::{blocking::multipart, header::{HeaderMap, HeaderName, HeaderValue}};
+use reqwest::{
+    blocking::multipart,
+    header::{HeaderMap, HeaderName, HeaderValue},
+};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -414,6 +418,46 @@ fn main() {
         }
     }
 
+    fn handle_delete_request(
+        client: &reqwest::blocking::Client,
+        url: String,
+        access_token: String,
+        variable_dir: String,
+        headers: HeaderMap,
+        req_body: Option<RequestDataBody>,
+    ) -> Result<reqwest::blocking::Response, Box<dyn std::error::Error>> {
+        match req_body {
+            Some(req_body) => {
+                let mut body_data = request_body_data(req_body.clone());
+
+                resolve_placeholders(&mut body_data, &variable_dir)?;
+                if req_body.body_type == "FORM_DATA" {
+                    // Simplified: Just send the DELETE request without a body here.
+                    Ok(client
+                        .delete(url) // Changed from .put(url)
+                        .headers(headers)
+                        .header("Authorization", access_token)
+                        .send()?)
+                } else {
+                    let pretty_json_string = serde_json::to_string_pretty(&body_data)?;
+                    // Use .body() to send the JSON content (non-standard for DELETE)
+                    Ok(client
+                        .delete(url) // Changed from .put(url)
+                        .headers(headers)
+                        .header("Authorization", access_token)
+                        .body(pretty_json_string)
+                        .send()?)
+                }
+            }
+            // If there is no body, it is a standard DELETE request.
+            None => Ok(client
+                .delete(url) // Changed from .put(url)
+                .headers(headers)
+                .header("Authorization", access_token)
+                .send()?),
+        }
+    }
+
     fn make_http_request(
         client: &reqwest::blocking::Client,
         method: &str,
@@ -429,6 +473,7 @@ fn main() {
                 handle_post_request(client, url, access_token, variable_dir, headers, req_body)
             }
             "PUT" => handle_put_request(client, url, access_token, variable_dir, headers, req_body),
+            "DELETE" => handle_delete_request(client, url, access_token, variable_dir, headers, req_body),
             _ => Err(format!("Unsupported HTTP method: {}", method).into()),
         }
     }
