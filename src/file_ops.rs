@@ -35,6 +35,7 @@ pub fn write_to_file(
     variable_path: &Option<String>,
     variable_structure: &Value,
 ) -> io::Result<()> {
+    println!("body_data : {:?}", body_data);
     // If no path provided, skip writing
     let path_str = match variable_path {
         Some(path) => path,
@@ -78,18 +79,27 @@ fn write_single_file(body_data: &Value, path: &Path, structure_str: &str) -> io:
     Ok(())
 }
 
-/// Write to multiple files in a directory based on key mappings
+/// Write to multiple files/folders in a directory based on key mappings
 fn write_multiple_files(body_data: &Value, dir_path: &Path, structure_str: &str) -> io::Result<()> {
-    // Ensure the directory exists
+    // 1. Ensure the root directory exists
     create_dir_all(dir_path)?;
 
     let mappings = parse_structure_mappings(structure_str);
 
     for mapping in mappings {
+        // 2. Resolve the full path for this specific file/mapping
         let file_path = dir_path.join(&mapping.filename);
 
-        let nested_value =
-            get_nested_value(body_data, &mapping.json_path).expect("Cannot get nested value...");
+        // 3. CRITICAL: Ensure the parent directory for this specific file exists
+        // This allows mapping.filename to be "subdir/sub-subdir/file.txt"
+        if let Some(parent) = file_path.parent() {
+            create_dir_all(parent)?;
+        }
+
+        // 4. Extract data and write
+        let nested_value = get_nested_value(body_data, &mapping.json_path)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "JSON path not found"))?;
+        
         let variable_value = nested_value.as_str().unwrap_or_default();
 
         let mut file = File::create(&file_path)?;
@@ -97,7 +107,7 @@ fn write_multiple_files(body_data: &Value, dir_path: &Path, structure_str: &str)
 
         println!(
             "Written to: {} (from path: {})",
-            mapping.filename.to_string().yellow().bold(),
+            file_path.display().to_string().yellow().bold(),
             mapping.json_path.to_string().yellow()
         );
     }
