@@ -17,7 +17,7 @@ use serde_json::Value;
 mod file_ops;
 use file_ops::{expand_tilde, read_from_file, write_to_file};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct AppMainRequest {
     base_url: String,
     headers: Option<HashMap<String, String>>,
@@ -129,7 +129,7 @@ fn main() {
     let tag = matches.get_one::<String>("tag");
 
     if let Some(file_data) = file {
-        let app_main_request = app_main_request(file_data).unwrap();
+        let app_main_request = app_main_request(file_data).unwrap_or_default();
 
         let tag_value: Option<&RequestData> = app_main_request
             .requests
@@ -227,7 +227,7 @@ fn main() {
     }
 
     fn app_main_request(file_data: &str) -> Result<AppMainRequest, io::Error> {
-        let file_path_buf = expand_tilde(&file_data);
+        let file_path_buf = expand_tilde(file_data);
         let file = File::open(file_path_buf).expect("File should open read only");
         // let file = File::open(file_path_buf).unwrap_or(default);
         let reader = BufReader::new(file);
