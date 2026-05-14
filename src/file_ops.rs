@@ -35,7 +35,6 @@ pub fn write_to_file(
     variable_path: &Option<String>,
     variable_structure: &Value,
 ) -> io::Result<()> {
-    println!("body_data : {:?}", body_data);
     // If no path provided, skip writing
     let path_str = match variable_path {
         Some(path) => path,
